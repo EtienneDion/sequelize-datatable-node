@@ -28,12 +28,20 @@ function paginate(config) {
 }
 
 function search(model, config, modelName, opt) {
-  if (_.isUndefined(config.search) || !config.search.value) {
-    return Promise.resolve({});
+  const columnSearchs = config.columns.map(column => column.searchable === `true` && column.search.value !== `` && column.data !== ``);
+  if ((_.isUndefined(config.search) || !config.search.value) && !columnSearchs.includes(true)) {
+      return Promise.resolve({});
   }
-
   const dialect = helper.getDialectFromModel(model);
-
+  if (columnSearchs.includes(true)) {
+    return config.columns.map((column) => {
+      if (column.search.value !== ``) {
+        const columnDef = {};
+        columnDef[column.data] = { $like: `%${column.search.value}%` };
+        return columnDef;
+      }
+    });
+  }
   return describe(model).then(description => _.concat(
       searchBuilder.charSearch(modelName, description, config, opt, dialect),
       searchBuilder.numericSearch(modelName, description, config, opt),
@@ -43,11 +51,32 @@ function search(model, config, modelName, opt) {
 
 function buildSearch(model, config, params, opt) {
   const leaves = helper.dfs(params, [], []);
-
-  if (_.isUndefined(config.search) || !config.search.value) {
-    return Promise.resolve({});
+  const columnSearchs = config.columns.map(column => column.searchable === `true` && column.search.value !== `` && column.data !== ``);
+  if ((_.isUndefined(config.search) || !config.search.value) && !columnSearchs.includes(true)) {
+      return Promise.resolve({});
   }
 
+  if (columnSearchs.includes(true)) {
+    return Promise.map(config.columns, (column) => {
+      if (column.searchable === `true` && column.search.value !== `` && column.data !== ``) {
+          return search(model, config, ``, opt);
+      }
+      return {};
+    }).then((result) => {
+
+      const objects = _.filter(result, res => _.isObject(res) && !_.isArray(res) && !_.isEmpty(res));
+      const arrays = _.filter(result, res => _.isArray(res) && !_.isEmpty(res));
+
+      const reducedArrays = _.reduce(arrays, (acc, val) => _.concat(acc, val), []);
+      const reducedObject = _.reduce(objects, (acc, val) => _.merge(acc, val), {});
+
+      const concatenated = {
+          $and: _.filter(_.concat(reducedArrays, reducedObject), res => !_.isEmpty(res)),
+      };
+
+      return concatenated;
+    });
+  }
   return Promise.map(leaves, leaf =>
     search(leaf.model || model, config, leaf.as || ``, opt)
   ).then((result) => {
@@ -58,7 +87,7 @@ function buildSearch(model, config, params, opt) {
     const reducedObject = _.reduce(objects, (acc, val) => _.merge(acc, val), {});
 
     const concatenated = {
-      $or: _.filter(_.concat(reducedArrays, reducedObject), res => !_.isEmpty(res)),
+      $and: _.filter(_.concat(reducedArrays, reducedObject), res => !_.isEmpty(res)),
     };
 
     return concatenated;
@@ -140,7 +169,6 @@ function getResult(model, config, modelParams, opt) {
       }
 
       _.assign(params, paginate(config));
-
       return params;
     })
     .then(newParams =>

@@ -56,7 +56,6 @@ function getModelAndColumn(column) {
 
 function getDialectFromModel(model) {
   const sequelize = model.QueryInterface.sequelize;
-
   return sequelize.options.dialect;
 }
 
